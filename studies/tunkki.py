@@ -103,8 +103,8 @@ def get_winning_team(match: dict, events: list):
     successful_penalties_home = []
     successful_penalties_away = []
     for e in events:
-        if e["period"] == 5 and e["type"] == "Shot" and e["shot"]["outcome"] == "Goal":
-            if e["team"] == match["home_team"]:
+        if e["period"] == 5 and e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal":
+            if e["team"]["name"] == match["home_team"]["home_team_name"]:
                 successful_penalties_home.append(e)
             else:
                 successful_penalties_away.append(e)
@@ -118,6 +118,9 @@ def get_winning_team(match: dict, events: list):
         return match["home_team"]
     else:
         return match["away_team"]
+
+def get_goal_events(match_events: list):
+    return [e for e in match_events if e["period"] <= 4 and e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal"]
 
 def get_result_type(match_events: list):
     ending_period_event = max(match_events, key=lambda m:m["period"])
@@ -138,13 +141,16 @@ def report_ucl():
     team_countries = [t["country"]["name"] for t in teams_involved]
 
     country_counts = Counter(team_countries)
-    print(f"Number of teams reaching final by country")
-    # We see top 5 leagues with the exception of france
+    print(f"* Number of teams reaching final by country")
+    # We see top 5 leagues with the exception of France
     for c in country_counts.most_common():
-        print(c)
+        print(f"\t{c}")
+    print()
 
     match_events = {m["match_id"]: load_events(m["match_id"]) for m in matches}
     
+    winning_teams = []
+    print("* Match results")
     for m in matches:
         season = m["season"]["season_name"]
         ht = m["home_team"]["home_team_name"]
@@ -153,9 +159,26 @@ def report_ucl():
         away_score = m["away_score"]
         res_type = get_result_type(match_events[m["match_id"]])
         m["result_type"] = res_type # TODO: refactor to something else than random populating
-        print(f"* {season}: {ht}-{at} {home_score}-{away_score} {res_type.name}")
-
-    winning_teams = [get_winning_team(match, match_events[match["match_id"]]) for match in matches]
+        winner = get_winning_team(m, match_events[m["match_id"]])
+        winning_teams.append(winner)
+        match_overview = f"\t{season}: {ht}-{at} {home_score}-{away_score} {res_type.name}"
+        print(match_overview)
+        line_len = len(match_overview) + 7
+        goals = get_goal_events(match_events[m["match_id"]])
+        m["goals"] = goals
+        for g in goals:
+            goal_time = g['minute'] + 1 # Not the latest full minute but the ongoing minute
+            if g["team"]["name"] == ht:
+                print(f"\t{goal_time}' {g['player']['name']}")
+            else:
+                away_goal_line = f"{goal_time}' {g['player']['name']}"
+                away_padded = " " * (line_len - len(away_goal_line)) + away_goal_line
+                print(away_padded)
+        if m['result_type'] == ResultType.PENALTY_SHOOTOUT:
+            print("\t** Penalties")
+            print(f"\t\t{m['home_penalty_score']}-{m['away_penalty_score']}")
+        print()
+                
     # compare winning teams to matches, should notice that spanish side has always won when present
     teams_by_country = {}
     for team in winning_teams:
@@ -166,11 +189,21 @@ def report_ucl():
         else:
             teams_by_country[country] = [name]
     
+    print(f"* Wins by country and team")
     for country, teams in sorted(list(teams_by_country.items()), key=lambda pair: -len(pair[1])):
         c = Counter(teams).most_common()
-        print(f"* {country} - {len(teams)} wins")
+        print(f"\t{country} - {len(teams)} wins")
         for pair in c:
-            print(f"\t {pair}")
+            print(f"\t\t{pair}")
+    print()
+    goal_scorers = sorted(list(itertools.chain.from_iterable(map(lambda m: map(lambda g: g["player"]["name"], m["goals"]), matches))))
+    goal_counter = Counter(goal_scorers)
+    print("* Top 10 goal scorers")
+    for g in goal_counter.most_common()[:10]:
+        print(f"\t{g}")
+
+
+
 
 def number_summary():
     match_count = len(datastore.matches)
