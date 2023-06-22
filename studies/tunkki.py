@@ -45,14 +45,17 @@ def get_items(dir: str) -> list:
     
     return ret_items
 
-def load_data():
+def load_all_data():
+    """Load all data (except 360 data which is TODO).
+    Store loaded data into `datastore` to be shared
+    between functions. Loading everything (especially events)
+    takes time so omitted from Champions League reporting
+    which is the only maintained reporting at the moment.
+    """
     with open(COMPETITIONS_FILE, "r") as f:
         datastore.competitions = json.load(f)
-    # instead of fetching events for all matches, events are fetched later
-    # only for specific matches to reduce overhead
-    #datastore.events = get_items(EVENTS_PATH)
-    # same goes for lineups
-    #datastore.lineups = get_items(LINEUPS_PATH)
+    datastore.events = get_items(EVENTS_PATH)
+    datastore.lineups = get_items(LINEUPS_PATH)
     datastore.matches = get_items(MATCHES_ROOT_PATH)
 
 def load_events(match_id: int):
@@ -173,7 +176,7 @@ def fmt_pair(pair: tuple):
     return f"{pair[0]} {pair[1]}"
 
 def report_ucl():
-    ucl_matches = [m for m in datastore.matches if m["competition"]["competition_name"] == "Champions League"]
+    ucl_matches = [m for m in get_items(MATCHES_ROOT_PATH) if m["competition"]["competition_name"] == "Champions League"]
     # filter to have continuous block of seasons
     matches = [m for m in ucl_matches if int(m["season"]["season_name"].split("/")[0]) >= 2008]
     matches.sort(key=lambda m:m["season"]["season_name"])
@@ -239,7 +242,6 @@ def number_summary():
     print(f"Match events: {event_count}")
 
 def main():
-    load_data()
     report_ucl()
 
 if __name__ == "__main__":
