@@ -96,30 +96,19 @@ def report_matches_by_competition(comp_name: str):
 def get_team_name(team: dict):
     return team.get("home_team_name", team.get("away_team_name"))
 
-def get_winning_team(match: dict, events: list):
+def get_winning_team(match: dict):
+    """Return winning team or None in case of a draw
+    """
     if match["home_score"] > match["away_score"]:
         return match["home_team"]
     elif match["home_score"] < match["away_score"]:
         return match["away_team"]
-
-    successful_penalties_home = []
-    successful_penalties_away = []
-    for e in events:
-        if e["period"] == 5 and e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal":
-            if e["team"]["name"] == match["home_team"]["home_team_name"]:
-                successful_penalties_home.append(e)
-            else:
-                successful_penalties_away.append(e)
-
-    penalty_score_home = len(successful_penalties_home)
-    penalty_score_away = len(successful_penalties_away)
-    match["home_penalty_score"] = penalty_score_home
-    match["away_penalty_score"] = penalty_score_away
-
-    if penalty_score_home > penalty_score_away:
+    elif match["home_penalty_score"] > match["away_penalty_score"]:
         return match["home_team"]
-    else:
+    elif match["home_penalty_score"] < match["away_penalty_score"]:
         return match["away_team"]
+    else:
+        return None
 
 def get_goal_events(match_events: list):
     return [e for e in match_events if e["period"] <= 4 and e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal"]
@@ -132,6 +121,19 @@ def get_result_type(match_events: list):
     elif ending_period <= 4:
         return ResultType.EXTRA_TIME
     return ResultType.PENALTY_SHOOTOUT
+
+def populate_penalty_scores(match: dict, events: list):
+    successful_penalties_home = []
+    successful_penalties_away = []
+    for e in events:
+        if e["period"] == 5 and e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal":
+            if e["team"]["name"] == match["home_team"]["home_team_name"]:
+                successful_penalties_home.append(e)
+            else:
+                successful_penalties_away.append(e)
+
+    match["home_penalty_score"] = len(successful_penalties_home)
+    match["away_penalty_score"] = len(successful_penalties_away)
 
 def populate_player_nicknames(match_id: int, match_event_list: list):
     lineups: list = []
@@ -149,12 +151,35 @@ def populate_player_nicknames(match_id: int, match_event_list: list):
         nickname = player_in_lineup["player_nickname"]
         player["nickname"] = nickname if nickname is not None else player["name"]
 
+def print_match_result(match: dict):
+    season = match["season"]["season_name"]
+    ht = match["home_team"]["home_team_name"]
+    at = match["away_team"]["away_team_name"]
+    home_score = match["home_score"]
+    away_score = match["away_score"]
+    match_overview = f"{' ' * 8}{season} {ht}{' ' * 4}- {at} {home_score}-{away_score}"
+    print(match_overview)
+    ht_pos = match_overview.index(ht)
+    at_pos = match_overview.index(at)
+    for g in match["goals"]:
+        goal_time = g['minute'] + 1 # Not the latest full minute but the ongoing minute
+        team_pos = ht_pos if g["team"]["name"] == ht else at_pos
+        print(f"{' ' * team_pos}{goal_time}' {g['player']['nickname']}")
+
+    if match['result_type'] == ResultType.PENALTY_SHOOTOUT:
+        print(f"{' ' * ht_pos}* Penalties {match['home_penalty_score']}-{match['away_penalty_score']}")
+
+def fmt_pair(pair: tuple):
+    return f"{pair[0]} {pair[1]}"
+
 def report_ucl():
     ucl_matches = [m for m in datastore.matches if m["competition"]["competition_name"] == "Champions League"]
     # filter to have continuous block of seasons
     matches = [m for m in ucl_matches if int(m["season"]["season_name"].split("/")[0]) >= 2008]
     matches.sort(key=lambda m:m["season"]["season_name"])
-    
+    first_season = matches[0]["season"]["season_name"]
+    last_season = matches[-1]["season"]["season_name"]
+    print(f"Study of Champions League finals for seasons {first_season} - {last_season}\n")
     teams_involved = list(itertools.chain.from_iterable(map(lambda m: (m["home_team"], m["away_team"]), matches)))
     team_countries = [t["country"]["name"] for t in teams_involved]
 
@@ -162,42 +187,21 @@ def report_ucl():
     print(f"* Number of teams reaching final by country")
     # We see top 5 leagues with the exception of France
     for c in country_counts.most_common():
-        print(f"\t{c}")
+        print(f"\t{fmt_pair(c)}")
     print()
 
     match_events = {m["match_id"]: load_events(m["match_id"]) for m in matches}
-    
-    winning_teams = []
+
     print("* Match results")
     for m in matches:
-        season = m["season"]["season_name"]
-        ht = m["home_team"]["home_team_name"]
-        at = m["away_team"]["away_team_name"]
-        home_score = m["home_score"]
-        away_score = m["away_score"]
-        res_type = get_result_type(match_events[m["match_id"]])
-        m["result_type"] = res_type # TODO: refactor to something else than random populating
-        winner = get_winning_team(m, match_events[m["match_id"]])
-        winning_teams.append(winner)
-        match_overview = f"\t{season}: {ht}-{at} {home_score}-{away_score} {res_type.name}"
-        print(match_overview)
-        line_len = len(match_overview) + 7 # account fot tab character showing as 8 spaces
-        goals = get_goal_events(match_events[m["match_id"]])
-        m["goals"] = goals
-        populate_player_nicknames(m["match_id"], goals)
-        for g in goals:
-            goal_time = g['minute'] + 1 # Not the latest full minute but the ongoing minute
-            if g["team"]["name"] == ht:
-                print(f"\t{goal_time}' {g['player']['nickname']}")
-            else:
-                away_goal_line = f"{goal_time}' {g['player']['nickname']}"
-                away_padded = " " * (line_len - len(away_goal_line)) + away_goal_line
-                print(away_padded)
-        if m['result_type'] == ResultType.PENALTY_SHOOTOUT:
-            print("\t** Penalties")
-            print(f"\t\t{m['home_penalty_score']}-{m['away_penalty_score']}")
+        m["result_type"] = get_result_type(match_events[m["match_id"]])
+        m["goals"] = get_goal_events(match_events[m["match_id"]])
+        populate_penalty_scores(m, match_events[m["match_id"]])
+        populate_player_nicknames(m["match_id"], m["goals"])
+        print_match_result(m)
         print()
 
+    winning_teams = [get_winning_team(m) for m in matches]
     # TODO: compare winning teams to matches, should notice that spanish side has always won when present
     teams_by_country = {}
     for team in winning_teams:
@@ -213,14 +217,15 @@ def report_ucl():
         c = Counter(teams).most_common()
         print(f"\t{country} - {len(teams)} wins")
         for pair in c:
-            print(f"\t\t{pair}")
+            print(f"\t\t{fmt_pair(pair)}")
     print()
+
     goal_scorers = sorted(list(itertools.chain.from_iterable(
         map(lambda m: map(lambda g: g["player"]["nickname"], m["goals"]), matches))))
     goal_counter = Counter(goal_scorers)
     print("* Top 10 goal scorers")
     for g in goal_counter.most_common()[:10]:
-        print(f"\t{g}")
+        print(f"\t{fmt_pair(g)}")
 
 def number_summary():
     match_count = len(datastore.matches)
